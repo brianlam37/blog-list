@@ -4,17 +4,26 @@ const helper = require('./test_helper');
 const app = require('../app');
 const api = supertest(app);
 const Blog = require('../models/blog');
+const User = require('../models/user');
+const bcrypt = require('bcrypt');
 
 beforeEach(async () => {
+	await User.deleteMany({});
+
+	const userObjects = helper.users
+		.map(user => new User(user));
+	const promiseUserArray = userObjects.map(user => user.save());
+	await Promise.all(promiseUserArray);
+
 	await Blog.deleteMany({});
 
 	const blogObjects = helper.blogs
 		.map(blog => new Blog(blog));
-	const promiseArray = blogObjects.map(blog => blog.save());
-	await Promise.all(promiseArray);
+	const promiseBlogArray = blogObjects.map(blog => blog.save());
+	await Promise.all(promiseBlogArray);
 });
 
-test('notes are returned as json', async () => {
+test('blogs are returned as json', async () => {
 	await api
 		.get('/api/blogs')
 		.expect(200)
@@ -40,83 +49,193 @@ test('a blog can be retrieved from id', async () => {
 	expect(resultBlog.body.id).toBeDefined();
 });
 
-// test('a specific note is within the returned notes', async () => {
-// 	const response = await api.get('/api/notes');
+describe('adding blogs', () => {
+	beforeEach(async () => {
+		await User.deleteMany({});
 
-// 	const contents = response.body.map(r => r.content);
+		const passwordHash = await bcrypt.hash('wan', 10);
+		const user = new User({username: 'myshell', passwordHash});
 
-// 	expect(contents).toContain(
-// 		'Browser can execute only Javascript'
-// 	);
-// });
+		await user.save();
+	});
+	test('a valid blog can be added', async () => {
+		const login = {
+			username:'myshell',
+			password:'wan'
+		};
 
-// test('a valid note can be added', async () => {
-// 	const newNote = {
-// 		content: 'async/await simplifies making async calls',
-// 		important: true,
+		const loginResponse = await api
+			.post('/api/login')
+			.send(login)
+			.expect(200);
+
+		const TOKEN = loginResponse.body.token;
+
+		const newBlog = {
+			title:'big bobgraphy',
+			author: 'big bob',
+			url: 'https://bigbob.com',
+			likes:0
+		};
+
+		await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(newBlog)
+			.expect(201)
+			.expect('Content-Type', /application\/json/);
+
+		const blogsAtEnd = await helper.blogsInDb();
+		expect(blogsAtEnd).toHaveLength(helper.blogs.length + 1);
+
+		const titles = blogsAtEnd.map(b => b.title);
+
+		expect(titles).toContain(
+			'big bobgraphy'
+		);
+	});
+
+	test('a blog without likes can be added and will default to 0', async () => {
+		const login = {
+			username:'myshell',
+			password:'wan'
+		};
+
+		const loginResponse = await api
+			.post('/api/login')
+			.send(login)
+			.expect(200);
+
+		const TOKEN = loginResponse.body.token;
+
+		const newBlog = {
+			title:'0 likes',
+			author: 'michelle',
+			url: 'https://myshell.com',
+		};
+
+
+		const response = await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(newBlog)
+			.expect(201)
+			.expect('Content-Type', /application\/json/);
+
+		expect(response.body.likes).toEqual(0);
+
+		const blogsAtEnd = await helper.blogsInDb();
+		expect(blogsAtEnd).toHaveLength(helper.blogs.length + 1);
+
+		const titles = blogsAtEnd.map(b => b.title);
+
+		expect(titles).toContain(
+			'0 likes'
+		);
+	});
+
+	test('blog without a title or url is not added', async () => {
+		const login = {
+			username:'myshell',
+			password:'wan'
+		};
+
+		const loginResponse = await api
+			.post('/api/login')
+			.send(login)
+			.expect(200);
+
+		const TOKEN = loginResponse.body.token;
+
+		const urlLessBlog = {
+			title: 'no url',
+			author: 'big bob'
+		};
+		const titleLessBlog = {
+			author: 'big bob',
+			url: 'no author'
+		};
+		const emptyBlog = {
+
+		};
+
+		await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(urlLessBlog)
+			.expect(400);
+
+		await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(titleLessBlog)
+			.expect(400);
+
+		await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(emptyBlog)
+			.expect(400);
+
+		const blogsAtEnd = await helper.blogsInDb();
+
+		expect(blogsAtEnd).toHaveLength(helper.blogs.length);
+	});
+
+	test('a blog cannot be added without token', async () => {
+		const TOKEN = null;
+
+		const newBlog = {
+			title:'big bobgraphy',
+			author: 'big bob',
+			url: 'https://bigbob.com',
+			likes:0
+		};
+
+		await api
+			.post('/api/blogs')
+			.set('Authorization', `Bearer ${TOKEN}`)
+			.send(newBlog)
+			.expect(401)
+			.expect('Content-Type', /application\/json/);
+
+		const blogsAtEnd = await helper.blogsInDb();
+		expect(blogsAtEnd).toHaveLength(helper.blogs.length);
+	});
+
+});
+test('fails with status code 400 if data invalid user', async () => {
+	const newUser = {
+		username: 'michelin',
+		name: 'michelle',
+		password: 'wa'
+	};
+
+	await api
+		.post('/api/users')
+		.send(newUser)
+		.expect(400);
+
+	const usersAtEnd = await helper.usersInDb();
+
+	expect(usersAtEnd).toHaveLength(helper.users.length);
+});
+
+// test('login user', async () => {
+// 	const login = {
+// 		username:'myshell',
+// 		password:'wan'
 // 	};
 
-// 	await api
-// 		.post('/api/notes')
-// 		.send(newNote)
-// 		.expect(200)
-// 		.expect('Content-Type', /application\/json/);
+// 	const response = await api
+// 		.post('/api/login')
+// 		.send(login)
+// 		.expect(200);
+// 	console.log(response.body);
 
-// 	const notesAtEnd = await helper.notesInDb();
-// 	expect(notesAtEnd).toHaveLength(helper.initialNotes.length + 1);
-
-// 	const contents = notesAtEnd.map(n => n.content);
-
-// 	expect(contents).toContain(
-// 		'async/await simplifies making async calls'
-// 	);
 // });
 
-// test('note without content is not added', async () => {
-// 	const newNote = {
-// 		important: true
-// 	};
 
-// 	await api
-// 		.post('/api/notes')
-// 		.send(newNote)
-// 		.expect(400);
-
-// 	const notesAtEnd = await helper.notesInDb();
-
-// 	expect(notesAtEnd).toHaveLength(helper.initialNotes.length);
-// });
-
-// test('a specific note can be viewed', async () => {
-// 	const notesAtStart = await helper.notesInDb();
-
-// 	const noteToView = notesAtStart[0];
-
-// 	const resultNote = await api
-// 		.get(`/api/notes/${noteToView.id}`)
-// 		.expect(200)
-// 		.expect('Content-Type', /application\/json/);
-
-// 	const processedNoteToView = JSON.parse(JSON.stringify(noteToView));
-// 	expect(resultNote.body).toEqual(processedNoteToView);
-// });
-
-// test('a not can be deleted', async () => {
-// 	const notesAtStart = await helper.notesInDb();
-// 	const noteToDelete = notesAtStart[0];
-
-// 	await api
-// 		.delete(`/api/notes/${noteToDelete.id}`)
-// 		.expect(204);
-
-// 	const notesAtEnd = await helper.notesInDb();
-
-// 	expect(notesAtEnd).toHaveLength(helper.initialNotes.length - 1);
-
-// 	const contents = notesAtEnd.map(r => r.content);
-
-// 	expect(contents).not.toContain(noteToDelete.content);
-// });
 
 afterAll(() => {
 	mongoose.connection.close();
